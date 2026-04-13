@@ -1,18 +1,11 @@
 package com.commissionhub.commission_hub.service;
 
-import com.commissionhub.commission_hub.dto.request.CreateCommissionRequest;
-import com.commissionhub.commission_hub.dto.request.CreateTaskRequest;
-import com.commissionhub.commission_hub.dto.request.RejectTaskRequest;
-import com.commissionhub.commission_hub.dto.response.CommissionResponse;
-import com.commissionhub.commission_hub.dto.response.TaskResponse;
-import com.commissionhub.commission_hub.entity.Commission;
-import com.commissionhub.commission_hub.entity.CommissionTask;
-import com.commissionhub.commission_hub.entity.Notification;
-import com.commissionhub.commission_hub.entity.User;
-import com.commissionhub.commission_hub.enums.CommissionStatus;
-import com.commissionhub.commission_hub.enums.NotificationType;
-import com.commissionhub.commission_hub.enums.Role;
-import com.commissionhub.commission_hub.enums.TaskStatus;
+import com.commissionhub.commission_hub.dto.request.*;
+import com.commissionhub.commission_hub.dto.response.*;
+import com.commissionhub.commission_hub.entity.*;
+import com.commissionhub.commission_hub.enums.*;
+import com.commissionhub.commission_hub.exception.BadRequestException;
+import com.commissionhub.commission_hub.exception.NotFoundException;
 import com.commissionhub.commission_hub.repository.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -35,32 +28,25 @@ public class CommissionService {
     private final NotificationRepository notificationRepository;
     private final SystemConfigRepository systemConfigRepository;
 
-    // Lấy user hiện tại từ JWT
     private User getCurrentUser() {
-        String email = SecurityContextHolder.getContext()
-                .getAuthentication().getName();
+        String email = SecurityContextHolder.getContext().getAuthentication().getName();
         return userRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("User không tồn tại"));
+                .orElseThrow(() -> new NotFoundException("User không tồn tại"));
     }
 
-    // Lấy số ngày overdue từ config
     private int getOverdueDays() {
         return systemConfigRepository.findByConfigKey("task_overdue_days")
                 .map(c -> Integer.parseInt(c.getConfigValue()))
                 .orElse(30);
     }
 
-    // ============================================================
-    // 1. Tạo hoa hồng tháng
-    // ============================================================
     @Transactional
     public CommissionResponse createCommission(CreateCommissionRequest request) {
         User user = getCurrentUser();
 
-        // Kiểm tra đã có hoa hồng tháng này chưa
         if (commissionRepository.findByUserIdAndPeriodMonthAndPeriodYear(
                 user.getId(), request.getPeriodMonth(), request.getPeriodYear()).isPresent()) {
-            throw new RuntimeException("Hoa hồng tháng " + request.getPeriodMonth()
+            throw new BadRequestException("Hoa hồng tháng " + request.getPeriodMonth()
                     + "/" + request.getPeriodYear() + " đã tồn tại");
         }
 
@@ -79,19 +65,15 @@ public class CommissionService {
         return mapToCommissionResponse(commission);
     }
 
-    // ============================================================
-    // 2. Thêm task vào hoa hồng
-    // ============================================================
     @Transactional
     public TaskResponse createTask(String commissionId, CreateTaskRequest request) {
         User user = getCurrentUser();
 
         Commission commission = commissionRepository.findById(commissionId)
-                .orElseThrow(() -> new RuntimeException("Không tìm thấy hoa hồng"));
+                .orElseThrow(() -> new NotFoundException("Không tìm thấy hoa hồng"));
 
-        // Chỉ chủ nhân hoa hồng mới được thêm task
         if (!commission.getUser().getId().equals(user.getId())) {
-            throw new RuntimeException("Bạn không có quyền thêm task vào hoa hồng này");
+            throw new BadRequestException("Bạn không có quyền thêm task vào hoa hồng này");
         }
 
         CommissionTask task = CommissionTask.builder()
@@ -108,22 +90,19 @@ public class CommissionService {
         return mapToTaskResponse(task);
     }
 
-    // ============================================================
-    // 3. Nhân viên nhấn "Hoàn thành task"
-    // ============================================================
     @Transactional
     public TaskResponse completeTask(String taskId, LocalDate completedDate) {
         User user = getCurrentUser();
 
         CommissionTask task = commissionTaskRepository.findById(taskId)
-                .orElseThrow(() -> new RuntimeException("Không tìm thấy task"));
+                .orElseThrow(() -> new NotFoundException("Không tìm thấy task"));
 
         if (!task.getAssignedTo().getId().equals(user.getId())) {
-            throw new RuntimeException("Bạn không có quyền hoàn thành task này");
+            throw new BadRequestException("Bạn không có quyền hoàn thành task này");
         }
 
         if (task.getStatus() != TaskStatus.IN_PROGRESS) {
-            throw new RuntimeException("Task không ở trạng thái IN_PROGRESS");
+            throw new BadRequestException("Task không ở trạng thái IN_PROGRESS");
         }
 
         task.setTaskCompletedDate(completedDate);
@@ -131,7 +110,6 @@ public class CommissionService {
         task.setStatus(TaskStatus.PENDING);
         commissionTaskRepository.save(task);
 
-        // Gửi notification cho tất cả Director
         userRepository.findAll().stream()
                 .filter(u -> u.getRole() == Role.DIRECTOR || u.getRole() == Role.ADMIN)
                 .forEach(director -> {
@@ -150,22 +128,18 @@ public class CommissionService {
         return mapToTaskResponse(task);
     }
 
-    // ============================================================
-    // 4. Director duyệt task
-    // ============================================================
     @Transactional
     public TaskResponse approveTask(String taskId) {
         CommissionTask task = commissionTaskRepository.findById(taskId)
-                .orElseThrow(() -> new RuntimeException("Không tìm thấy task"));
+                .orElseThrow(() -> new NotFoundException("Không tìm thấy task"));
 
         if (task.getStatus() != TaskStatus.PENDING) {
-            throw new RuntimeException("Task không ở trạng thái PENDING");
+            throw new BadRequestException("Task không ở trạng thái PENDING");
         }
 
         task.setStatus(TaskStatus.APPROVED);
         commissionTaskRepository.save(task);
 
-        // Gửi notification cho nhân viên
         Notification noti = Notification.builder()
                 .user(task.getAssignedTo())
                 .type(NotificationType.TASK_APPROVED)
@@ -180,23 +154,19 @@ public class CommissionService {
         return mapToTaskResponse(task);
     }
 
-    // ============================================================
-    // 5. Director từ chối task
-    // ============================================================
     @Transactional
     public TaskResponse rejectTask(String taskId, RejectTaskRequest request) {
         CommissionTask task = commissionTaskRepository.findById(taskId)
-                .orElseThrow(() -> new RuntimeException("Không tìm thấy task"));
+                .orElseThrow(() -> new NotFoundException("Không tìm thấy task"));
 
         if (task.getStatus() != TaskStatus.PENDING) {
-            throw new RuntimeException("Task không ở trạng thái PENDING");
+            throw new BadRequestException("Task không ở trạng thái PENDING");
         }
 
         task.setStatus(TaskStatus.REJECTED);
         task.setRejectionReason(request.getRejectionReason());
         commissionTaskRepository.save(task);
 
-        // Gửi notification cho nhân viên
         Notification noti = Notification.builder()
                 .user(task.getAssignedTo())
                 .type(NotificationType.TASK_REJECTED)
@@ -211,41 +181,45 @@ public class CommissionService {
         return mapToTaskResponse(task);
     }
 
-    // ============================================================
-    // 6. Xem lịch sử hoa hồng cá nhân
-    // ============================================================
     public List<CommissionResponse> getMyCommissions() {
         User user = getCurrentUser();
         return commissionRepository
                 .findByUserIdOrderByPeriodYearDescPeriodMonthDesc(user.getId())
-                .stream()
-                .map(this::mapToCommissionResponse)
-                .collect(Collectors.toList());
+                .stream().map(this::mapToCommissionResponse).collect(Collectors.toList());
     }
 
-    // ============================================================
-    // 7. Director xem tất cả task PENDING cần duyệt
-    // ============================================================
     public List<TaskResponse> getPendingTasks() {
         return commissionTaskRepository.findByStatus(TaskStatus.PENDING)
-                .stream()
-                .map(this::mapToTaskResponse)
-                .collect(Collectors.toList());
+                .stream().map(this::mapToTaskResponse).collect(Collectors.toList());
     }
 
-    // ============================================================
-    // Helper methods
-    // ============================================================
+    public List<CommissionResponse> getAllCommissions() {
+        return commissionRepository.findAll().stream()
+                .map(this::mapToCommissionResponse).collect(Collectors.toList());
+    }
+
+    public CommissionResponse getCommissionById(String id) {
+        return mapToCommissionResponse(commissionRepository.findById(id)
+                .orElseThrow(() -> new NotFoundException("Không tìm thấy hoa hồng")));
+    }
+
+    public TaskResponse getTaskById(String taskId) {
+        return mapToTaskResponse(commissionTaskRepository.findById(taskId)
+                .orElseThrow(() -> new NotFoundException("Không tìm thấy task")));
+    }
+
+    public List<TaskResponse> getOverdueTasks() {
+        return commissionTaskRepository.findOverdueTasks(getOverdueDays())
+                .stream().map(this::mapToTaskResponse).collect(Collectors.toList());
+    }
+
     private Long calculateAmount(Long revenue, java.math.BigDecimal rate) {
         return revenue * rate.longValue() / 100;
     }
 
     private CommissionResponse mapToCommissionResponse(Commission c) {
-        List<TaskResponse> tasks = commissionTaskRepository
-                .findByCommissionId(c.getId())
-                .stream()
-                .map(this::mapToTaskResponse)
-                .collect(Collectors.toList());
+        List<TaskResponse> tasks = commissionTaskRepository.findByCommissionId(c.getId())
+                .stream().map(this::mapToTaskResponse).collect(Collectors.toList());
 
         return CommissionResponse.builder()
                 .id(c.getId())

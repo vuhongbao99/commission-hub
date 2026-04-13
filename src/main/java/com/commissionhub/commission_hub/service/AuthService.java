@@ -3,11 +3,11 @@ package com.commissionhub.commission_hub.service;
 import com.commissionhub.commission_hub.dto.request.*;
 import com.commissionhub.commission_hub.dto.response.AuthResponse;
 import com.commissionhub.commission_hub.entity.*;
+import com.commissionhub.commission_hub.exception.BadRequestException;
+import com.commissionhub.commission_hub.exception.NotFoundException;
 import com.commissionhub.commission_hub.repository.*;
 import com.commissionhub.commission_hub.security.JwtUtil;
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.authentication.*;
-import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,18 +24,14 @@ public class AuthService {
 
     @Transactional
     public AuthResponse login(LoginRequest request) {
-
-
         User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new RuntimeException("Email hoặc mật khẩu không đúng"));
+                .orElseThrow(() -> new BadRequestException("Email hoặc mật khẩu không đúng"));
 
         if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
-            throw new RuntimeException("Email hoặc mật khẩu không đúng");
+            throw new BadRequestException("Email hoặc mật khẩu không đúng");
         }
 
-
-        String accessToken = jwtUtil.generateAccessToken(
-                user.getEmail(), user.getRole().name());
+        String accessToken = jwtUtil.generateAccessToken(user.getEmail(), user.getRole().name());
         String refreshToken = jwtUtil.generateRefreshToken(user.getEmail());
 
         RefreshToken tokenEntity = RefreshToken.builder()
@@ -59,15 +55,14 @@ public class AuthService {
     public AuthResponse refreshToken(RefreshTokenRequest request) {
         RefreshToken tokenEntity = refreshTokenRepository
                 .findByTokenAndIsRevokedFalse(request.getRefreshToken())
-                .orElseThrow(() -> new RuntimeException("Refresh token không hợp lệ"));
+                .orElseThrow(() -> new BadRequestException("Refresh token không hợp lệ"));
 
         if (tokenEntity.getExpiresAt().isBefore(LocalDateTime.now())) {
-            throw new RuntimeException("Refresh token đã hết hạn");
+            throw new BadRequestException("Refresh token đã hết hạn");
         }
 
         User user = tokenEntity.getUser();
-        String newAccessToken = jwtUtil.generateAccessToken(
-                user.getEmail(), user.getRole().name());
+        String newAccessToken = jwtUtil.generateAccessToken(user.getEmail(), user.getRole().name());
 
         return AuthResponse.builder()
                 .accessToken(newAccessToken)

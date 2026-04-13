@@ -44,4 +44,18 @@ public class CommissionController {
     public ResponseEntity<List<CommissionResponse>> getMyCommissions() {
         return ResponseEntity.ok(commissionService.getMyCommissions());
     }
+
+    // Director xem tất cả hoa hồng
+    @GetMapping
+    @PreAuthorize("hasAnyRole('DIRECTOR','ADMIN')")
+    public ResponseEntity<List<CommissionResponse>> getAll() {
+        return ResponseEntity.ok(commissionService.getAllCommissions());
+    }
+
+    // Xem chi tiết hoa hồng
+    @GetMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ACCOUNTANT','DIRECTOR','ADMIN')")
+    public ResponseEntity<CommissionResponse> getById(@PathVariable String id) {
+        return ResponseEntity.ok(commissionService.getCommissionById(id));
+    }
 }

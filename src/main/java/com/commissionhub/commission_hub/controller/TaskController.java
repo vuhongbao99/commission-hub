@@ -53,4 +53,18 @@ public class TaskController {
     public ResponseEntity<List<TaskResponse>> getPending() {
         return ResponseEntity.ok(commissionService.getPendingTasks());
     }
+
+    // Xem chi tiết task
+    @GetMapping("/{taskId}")
+    @PreAuthorize("hasAnyRole('ACCOUNTANT','DIRECTOR','ADMIN')")
+    public ResponseEntity<TaskResponse> getById(@PathVariable String taskId) {
+        return ResponseEntity.ok(commissionService.getTaskById(taskId));
+    }
+
+    // Danh sách task chậm tiến độ
+    @GetMapping("/overdue")
+    @PreAuthorize("hasAnyRole('DIRECTOR','ADMIN')")
+    public ResponseEntity<List<TaskResponse>> getOverdue() {
+        return ResponseEntity.ok(commissionService.getOverdueTasks());
+    }
 }
